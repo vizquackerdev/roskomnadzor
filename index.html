@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Симулятор РКН</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts Fira Code & VT323 -->
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Fira Code', monospace;
+            background-color: #030712;
+            color: #22c55e;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        /* Эффект ЭЛТ Монитора / Сканирующие линии */
+        .crt-overlay {
+            background: linear-gradient(
+                rgba(18, 16, 16, 0) 50%, 
+                rgba(0, 0, 0, 0.25) 50%
+            );
+            background-size: 100% 4px;
+            z-index: 50;
+            pointer-events: none;
+        }
+
+        /* Зелёное свечение текста и блоков */
+        .terminal-glow {
+            text-shadow: 0 0 8px rgba(34, 197, 94, 0.6);
+        }
+
+        .border-glow {
+            box-shadow: 0 0 15px rgba(34, 197, 94, 0.2), inset 0 0 15px rgba(34, 197, 94, 0.1);
+        }
+
+        /* Рулетка */
+        .roulette-container {
+            position: relative;
+            overflow: hidden;
+            mask-image: linear-gradient(to right, transparent, black 15%, black 85%, transparent);
+            -webkit-mask-image: linear-gradient(to right, transparent, black 15%, black 85%, transparent);
+        }
+
+        .roulette-track {
+            display: flex;
+            gap: 12px;
+            will-change: transform;
+        }
+
+        .roulette-marker {
+            position: absolute;
+            left: 50%;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: #22c55e;
+            transform: translateX(-50%);
+            z-index: 20;
+            box-shadow: 0 0 12px #22c55e;
+        }
+
+        .roulette-marker::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            border-left: 6px solid transparent;
+            border-right: 6px solid transparent;
+            border-top: 8px solid #22c55e;
+        }
+
+        .roulette-marker::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            border-left: 6px solid transparent;
+            border-right: 6px solid transparent;
+            border-bottom: 8px solid #22c55e;
+        }
+
+        /* Анимация мигания курсора */
+        .blink {
+            animation: blinker 1s linear infinite;
+        }
+        @keyframes blinker {
+            50% { opacity: 0; }
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between p-3 sm:p-6 relative overflow-x-hidden">
+    <!-- Overlay сетка сканера -->
+    <div class="fixed inset-0 crt-overlay"></div>
+
+    <!-- Шапка Текстовая -->
+    <header class="max-w-3xl w-full mx-auto mb-4 flex items-center justify-between border-b border-green-500/30 pb-3">
+        <div class="flex items-center space-x-2">
+            <span class="inline-block w-3 h-3 bg-green-500 rounded-full animate-ping"></span>
+            <span class="text-xs sm:text-sm font-bold tracking-widest text-green-400">RKN_OS // V3.09</span>
+        </div>
+        <div class="flex items-center space-x-4 text-xs sm:text-sm">
+            <div>
+                <span class="text-green-700">SCORE:</span>
+                <span id="score" class="font-bold text-green-400 terminal-glow">0</span>
+            </div>
+            <button id="soundToggleBtn" class="hover:text-green-300 transition px-2 py-1 border border-green-500/30 rounded">
+                <i id="soundIcon" class="fa-solid fa-volume-high"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- Основной контент -->
+    <main class="max-w-3xl w-full mx-auto flex-1 flex flex-col justify-center space-y-6 z-10">
+
+        <!-- Главный заголовок -->
+        <div class="text-center my-2">
+            <h1 class="text-2xl sm:text-4xl font-extrabold text-green-400 tracking-wider terminal-glow uppercase">
+                &gt; Что запретим сегодня?<span class="blink">_</span>
+            </h1>
+        </div>
+
+        <!-- Карточка Рулетки -->
+        <section class="bg-gray-950 border border-green-500/40 rounded-lg p-3 sm:p-5 border-glow">
+            <div class="flex items-center justify-between mb-3 text-xs">
+                <span class="text-green-600">[SYSTEM_ROULETTE]</span>
+                <span id="statusBadge" class="text-green-400 uppercase tracking-widest">
+                    READY_FOR_SCAN
+                </span>
+            </div>
+
+            <!-- Барабан Рулетки -->
+            <div class="roulette-container bg-black border border-green-500/30 rounded p-2 my-2 h-28 flex items-center">
+                <div class="roulette-marker"></div>
+                <div id="rouletteTrack" class="roulette-track">
+                    <!-- Заполняется динамически -->
+                </div>
+            </div>
+
+            <!-- Кнопка запуска -->
+            <div class="mt-4">
+                <button id="spinBtn" class="w-full py-3 bg-green-950/60 hover:bg-green-900/80 border border-green-500 text-green-300 font-bold tracking-wider rounded uppercase transition duration-150 active:scale-[0.99] terminal-glow flex items-center justify-center space-x-2">
+                    <i class="fa-solid fa-terminal"></i>
+                    <span>ЗАПУСТИТЬ_СКАНИРОВАНИЕ</span>
+                </button>
+            </div>
+        </section>
+
+        <!-- Меню решений по выпавшему сервису -->
+        <section id="actionCard" class="bg-gray-950 border border-green-500/30 rounded-lg p-4 sm:p-5 opacity-40 pointer-events-none transition-all duration-300">
+            <div class="flex flex-col sm:flex-row items-center sm:items-start justify-between gap-4 pb-4 border-b border-green-500/20">
+                <div class="flex items-center space-x-4">
+                    <div id="targetIcon" class="w-12 h-12 rounded bg-black border border-green-500/50 flex items-center justify-center text-2xl text-green-400 shrink-0">
+                        <i class="fa-solid fa-globe"></i>
+                    </div>
+                    <div>
+                        <h2 id="targetName" class="text-lg sm:text-xl font-bold text-green-300">ОЖИДАНИЕ_ВЫБОРА</h2>
+                        <p id="targetCategory" class="text-xs text-green-600">КАТЕГОРИЯ: —</p>
+                        <p id="targetDesc" class="text-xs text-green-500 mt-1">Запустите рулетку для определения цели.</p>
+                    </div>
+                </div>
+                
+                <div class="text-center sm:text-right shrink-0">
+                    <span class="text-[10px] text-green-600 block uppercase">Уровень угрозы</span>
+                    <span id="targetThreat" class="text-xs font-bold text-green-400">—</span>
+                </div>
+            </div>
+
+            <!-- Кнопки вердикта -->
+            <div class="mt-4">
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    
+                    <button id="btnBlock" class="py-3 px-2 bg-red-950/40 hover:bg-red-900/60 border border-red-500/60 text-red-400 rounded font-bold text-xs uppercase tracking-wider transition flex items-center justify-center space-x-2 group">
+                        <i class="fa-solid fa-ban group-hover:scale-110 transition-transform"></i>
+                        <span>ЗАБЛОКИРОВАТЬ</span>
+                    </button>
+
+                    <button id="btnWarn" class="py-3 px-2 bg-yellow-950/40 hover:bg-yellow-900/60 border border-yellow-500/60 text-yellow-400 rounded font-bold text-xs uppercase tracking-wider transition flex items-center justify-center space-x-2 group">
+                        <i class="fa-solid fa-triangle-exclamation group-hover:scale-110 transition-transform"></i>
+                        <span>ПРЕДУПРЕДИТЬ</span>
+                    </button>
+
+                    <button id="btnSpare" class="py-3 px-2 bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-500/60 text-emerald-400 rounded font-bold text-xs uppercase tracking-wider transition flex items-center justify-center space-x-2 group">
+                        <i class="fa-solid fa-shield-halved group-hover:scale-110 transition-transform"></i>
+                        <span>ПОЩАДИТЬ</span>
+                    </button>
+
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Подвал -->
+    <footer class="max-w-3xl w-full mx-auto mt-4 text-center text-[10px] text-green-700 uppercase tracking-widest">
+        RKN TERMINAL // SYSTEM READY
+    </footer>
+
+    <!-- Кастомное терминальное модальное окно -->
+    <div id="resultModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 opacity-0 pointer-events-none transition-opacity duration-200">
+        <div class="bg-gray-950 border border-green-500 rounded-lg p-5 max-w-sm w-full text-center border-glow transform scale-95 transition-transform duration-200" id="modalContent">
+            <div id="modalIconContainer" class="w-12 h-12 rounded border border-green-500/50 flex items-center justify-center mx-auto mb-3 text-xl bg-black">
+                <!-- Иконка -->
+            </div>
+            <h3 id="modalTitle" class="text-base font-bold text-green-300 uppercase mb-2">ВЕРДИКТ_ПРИНЯТ</h3>
+            <p id="modalDesc" class="text-xs text-green-500 mb-4">Описание решения.</p>
+            <div id="modalScoreDiff" class="text-sm font-bold mb-5"></div>
+            <button id="modalCloseBtn" class="w-full py-2 bg-green-950 hover:bg-green-900 text-green-300 border border-green-500 text-xs font-bold rounded uppercase transition">
+                ПРОДОЛЖИТЬ
+            </button>
+        </div>
+    </div>
+
+    <!-- JavaScript Логика -->
+    <script>
+        // База данных сервисов
+        const SERVICES = [
+            { id: 'youtube', name: 'YouTube', category: 'Видеохостинг', threat: 'ВЫСОКИЙ', icon: 'fa-brands fa-youtube', color: 'text-red-500', desc: 'Обнаружены ролики про медленный интернет и замедление.' },
+            { id: 'telegram', name: 'Telegram', category: 'Мессенджер', threat: 'КРИТИЧЕСКИЙ', icon: 'fa-paper-plane', color: 'text-sky-400', desc: 'Отказывается передавать ключи шифрования.' },
+            { id: 'wikipedia', name: 'Википедия', category: 'Энциклопедия', threat: 'СРЕДНИЙ', icon: 'fa-wikipedia-w', color: 'text-slate-200', desc: 'Содержит статьи, противоречащие официальным данным.' },
+            { id: 'steam', name: 'Steam', category: 'Игровая платформа', threat: 'НИЗКИЙ', icon: 'fa-brands fa-steam', color: 'text-blue-400', desc: 'Найдены запрещенные группы и игры без возрастных меток.' },
+            { id: 'discord', name: 'Discord', category: 'Мессенджер', threat: 'ВЫСОКИЙ', icon: 'fa-brands fa-discord', color: 'text-indigo-400', desc: 'Отсутствует модерация отдельных каналов и сообществ.' },
+            { id: 'github', name: 'GitHub', category: 'Разработка', threat: 'НИЗКИЙ', icon: 'fa-brands fa-github', color: 'text-slate-100', desc: 'Найден фрагмент кода с обходом блокировок.' },
+            { id: 'twitch', name: 'Twitch', category: 'Стриминг', threat: 'СРЕДНИЙ', icon: 'fa-brands fa-twitch', color: 'text-purple-400', desc: 'Стримеры нецелевым образом высказываются о законах.' },
+            { id: 'roblox', name: 'Roblox', category: 'Игры', threat: 'СРЕДНИЙ', icon: 'fa-gamepad', color: 'text-red-400', desc: 'Дети строят виртуальные миры без разрешения.' },
+            { id: 'duolingo', name: 'Duolingo', category: 'Обучение', threat: 'НИЗКИЙ', icon: 'fa-feather', color: 'text-emerald-400', desc: 'Зеленая сова слишком настойчиво учит иностранным языкам.' },
+            { id: 'vk', name: 'ВКонтакте', category: 'Соцсеть', threat: 'МИНИМАЛЬНЫЙ', icon: 'fa-brands fa-vk', color: 'text-blue-500', desc: 'Соблюдает все требования, но кто-то оставил подозрительный комментарий.' }
+        ];
+
+        // Константы размеров
+        const CARD_WIDTH = 96; // 6rem = 96px
+        const GAP = 12; // gap-3 = 12px
+        const ITEM_STEP = CARD_WIDTH + GAP; // Точный шаг между центрами карточек (108px)
+
+        // Состояние игры
+        let score = 0;
+        let currentTarget = null;
+        let isSpinning = false;
+        let soundEnabled = true;
+        let rouletteList = [];
+
+        // Web Audio API
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        let audioCtx = null;
+
+        function initAudio() {
+            if (!audioCtx) audioCtx = new AudioCtx();
+        }
+
+        function playSound(type) {
+            if (!soundEnabled) return;
+            try {
+                initAudio();
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                const now = audioCtx.currentTime;
+
+                if (type === 'tick') {
+                    osc.type = 'square';
+                    osc.frequency.setValueAtTime(800, now);
+                    gain.gain.setValueAtTime(0.03, now);
+                    gain.gain.linearRampToValueAtTime(0.001, now + 0.02);
+                    osc.start(now);
+                    osc.stop(now + 0.02);
+                } else if (type === 'win') {
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(523.25, now);
+                    osc.frequency.setValueAtTime(659.25, now + 0.08);
+                    gain.gain.setValueAtTime(0.08, now);
+                    gain.gain.linearRampToValueAtTime(0.001, now + 0.25);
+                    osc.start(now);
+                    osc.stop(now + 0.25);
+                } else if (type === 'action') {
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(300, now);
+                    osc.frequency.exponentialRampToValueAtTime(120, now + 0.1);
+                    gain.gain.setValueAtTime(0.08, now);
+                    gain.gain.linearRampToValueAtTime(0.001, now + 0.1);
+                    osc.start(now);
+                    osc.stop(now + 0.1);
+                }
+            } catch (e) {}
+        }
+
+        // Элементы DOM
+        const rouletteTrack = document.getElementById('rouletteTrack');
+        const spinBtn = document.getElementById('spinBtn');
+        const actionCard = document.getElementById('actionCard');
+        const statusBadge = document.getElementById('statusBadge');
+        
+        const targetIcon = document.getElementById('targetIcon');
+        const targetName = document.getElementById('targetName');
+        const targetCategory = document.getElementById('targetCategory');
+        const targetDesc = document.getElementById('targetDesc');
+        const targetThreat = document.getElementById('targetThreat');
+
+        const scoreEl = document.getElementById('score');
+        const soundToggleBtn = document.getElementById('soundToggleBtn');
+        const soundIcon = document.getElementById('soundIcon');
+
+        const resultModal = document.getElementById('resultModal');
+        const modalContent = document.getElementById('modalContent');
+        const modalIconContainer = document.getElementById('modalIconContainer');
+        const modalTitle = document.getElementById('modalTitle');
+        const modalDesc = document.getElementById('modalDesc');
+        const modalScoreDiff = document.getElementById('modalScoreDiff');
+        const modalCloseBtn = document.getElementById('modalCloseBtn');
+
+        // Генерация списка карточек
+        function generateRouletteItems() {
+            rouletteTrack.innerHTML = '';
+            rouletteList = [];
+
+            // Составляем длинный список карточек (60 элементов)
+            for (let i = 0; i < 60; i++) {
+                const randomService = SERVICES[Math.floor(Math.random() * SERVICES.length)];
+                rouletteList.push(randomService);
+
+                const item = document.createElement('div');
+                item.className = 'w-24 h-20 bg-black border border-green-500/30 rounded flex flex-col items-center justify-center p-2 shrink-0 select-none';
+                item.innerHTML = `
+                    <i class="fa-solid ${randomService.icon} text-xl ${randomService.color} mb-1"></i>
+                    <span class="text-[10px] font-bold text-green-400 truncate w-full text-center">${randomService.name}</span>
+                `;
+                rouletteTrack.appendChild(item);
+            }
+        }
+
+        // Вращение рулетки
+        function spinRoulette() {
+            if (isSpinning) return;
+            
+            isSpinning = true;
+            spinBtn.disabled = true;
+            spinBtn.classList.add('opacity-40', 'cursor-not-allowed');
+            actionCard.classList.add('opacity-40', 'pointer-events-none');
+            
+            statusBadge.innerText = 'SCANNING...';
+            statusBadge.className = 'text-yellow-400 animate-pulse uppercase tracking-widest';
+
+            generateRouletteItems();
+
+            // Выбираем целевой индекс карточки в конце ленты
+            const targetIndex = 45 + Math.floor(Math.random() * 8);
+            
+            // ВАЖНО: Закрепляем точный объект, на котором остановится маркера!
+            currentTarget = rouletteList[targetIndex];
+
+            // Точное вычисление сдвига рулетки
+            const containerWidth = rouletteTrack.parentElement.clientWidth;
+            // Позиция центра targetIndex элемента
+            const targetCenterPosition = (targetIndex * ITEM_STEP) + (CARD_WIDTH / 2);
+            // Позиция сдвига, чтобы центр элемента совпал с центром контейнера
+            const targetOffset = targetCenterPosition - (containerWidth / 2);
+
+            let start = null;
+            const duration = 3500; 
+            let lastTick = 0;
+
+            function animateRoulette(timestamp) {
+                if (!start) start = timestamp;
+                const progress = (timestamp - start) / duration;
+
+                if (progress < 1) {
+                    // Функция кубического замедления
+                    const easeProgress = 1 - Math.pow(1 - progress, 3);
+                    const currentX = easeProgress * targetOffset;
+                    rouletteTrack.style.transform = `translateX(-${currentX}px)`;
+
+                    // Звуковой клик при прокрутке
+                    const currentTick = Math.floor(currentX / ITEM_STEP);
+                    if (currentTick !== lastTick) {
+                        playSound('tick');
+                        lastTick = currentTick;
+                    }
+
+                    requestAnimationFrame(animateRoulette);
+                } else {
+                    rouletteTrack.style.transform = `translateX(-${targetOffset}px)`;
+                    playSound('win');
+                    finishSpin();
+                }
+            }
+
+            requestAnimationFrame(animateRoulette);
+        }
+
+        function finishSpin() {
+            isSpinning = false;
+            statusBadge.innerText = 'TARGET_LOCKED';
+            statusBadge.className = 'text-red-500 uppercase tracking-widest font-bold';
+
+            // Синхронно обновляем интерфейс именно выбранным объектом currentTarget
+            targetIcon.innerHTML = `<i class="fa-solid ${currentTarget.icon} ${currentTarget.color}"></i>`;
+            targetName.innerText = currentTarget.name;
+            targetCategory.innerText = `КАТЕГОРИЯ: ${currentTarget.category}`;
+            targetDesc.innerText = currentTarget.desc;
+            targetThreat.innerText = currentTarget.threat;
+
+            if (currentTarget.threat === 'КРИТИЧЕСКИЙ' || currentTarget.threat === 'ВЫСОКИЙ') {
+                targetThreat.className = 'text-xs font-bold text-red-500';
+            } else if (currentTarget.threat === 'СРЕДНИЙ') {
+                targetThreat.className = 'text-xs font-bold text-yellow-400';
+            } else {
+                targetThreat.className = 'text-xs font-bold text-emerald-400';
+            }
+
+            actionCard.classList.remove('opacity-40', 'pointer-events-none');
+        }
+
+        // Выбор вердикта
+        function handleAction(action) {
+            if (!currentTarget) return;
+            playSound('action');
+
+            let points = 0;
+            let title = '';
+            let desc = '';
+            let iconClass = '';
+
+            if (action === 'block') {
+                if (currentTarget.threat === 'КРИТИЧЕСКИЙ' || currentTarget.threat === 'ВЫСОКИЙ') {
+                    points = +150;
+                    title = 'УСПЕШНАЯ БЛОКИРОВКА';
+                    desc = `Сервис ${currentTarget.name} нейтрализован за грубые нарушения.`;
+                } else {
+                    points = +50;
+                    title = 'СЕРВИС ЗАБЛОКИРОВАН';
+                    desc = `Вы заблокировали ${currentTarget.name}. Превентивная мера принята.`;
+                }
+                iconClass = 'fa-solid fa-ban text-red-500';
+            } 
+            else if (action === 'warn') {
+                points = +30;
+                title = 'ПРЕДУПРЕЖДЕНИЕ ОТПРАВЛЕНО';
+                desc = `Сервису ${currentTarget.name} выслано требование исправить нарушения.`;
+                iconClass = 'fa-solid fa-triangle-exclamation text-yellow-400';
+            } 
+            else if (action === 'spare') {
+                if (currentTarget.threat === 'КРИТИЧЕСКИЙ' || currentTarget.threat === 'ВЫСОКИЙ') {
+                    points = -100;
+                    title = 'ОШИБКА БЕЗОПАСНОСТИ!';
+                    desc = `Вы пощадили ${currentTarget.name} с высоким уровнем угрозы! Начислен штраф.`;
+                } else {
+                    points = +100;
+                    title = 'РАЗУМНЫЙ ВЫБОР';
+                    desc = `Сервис ${currentTarget.name} оставлен в покое.`;
+                }
+                iconClass = 'fa-solid fa-shield-halved text-emerald-400';
+            }
+
+            score += points;
+            scoreEl.innerText = score;
+
+            showModal(title, desc, points, iconClass);
+
+            actionCard.classList.add('opacity-40', 'pointer-events-none');
+            spinBtn.disabled = false;
+            spinBtn.classList.remove('opacity-40', 'cursor-not-allowed');
+            statusBadge.innerText = 'READY_FOR_SCAN';
+            statusBadge.className = 'text-green-400 uppercase tracking-widest';
+        }
+
+        function showModal(title, desc, points, iconClass) {
+            modalTitle.innerText = title;
+            modalDesc.innerText = desc;
+            
+            modalIconContainer.innerHTML = `<i class="${iconClass}"></i>`;
+
+            if (points >= 0) {
+                modalScoreDiff.innerText = `+${points} SCORE`;
+                modalScoreDiff.className = 'text-sm font-bold mb-4 text-green-400';
+            } else {
+                modalScoreDiff.innerText = `${points} SCORE`;
+                modalScoreDiff.className = 'text-sm font-bold mb-4 text-red-500';
+            }
+
+            resultModal.classList.remove('opacity-0', 'pointer-events-none');
+            modalContent.classList.remove('scale-95');
+            modalContent.classList.add('scale-100');
+        }
+
+        function closeModal() {
+            resultModal.classList.add('opacity-0', 'pointer-events-none');
+            modalContent.classList.remove('scale-100');
+            modalContent.classList.add('scale-95');
+        }
+
+        // Слушатели событий
+        spinBtn.addEventListener('click', spinRoulette);
+
+        document.getElementById('btnBlock').addEventListener('click', () => handleAction('block'));
+        document.getElementById('btnWarn').addEventListener('click', () => handleAction('warn'));
+        document.getElementById('btnSpare').addEventListener('click', () => handleAction('spare'));
+
+        modalCloseBtn.addEventListener('click', closeModal);
+
+        soundToggleBtn.addEventListener('click', () => {
+            soundEnabled = !soundEnabled;
+            soundIcon.className = soundEnabled ? 'fa-solid fa-volume-high' : 'fa-solid fa-volume-xmark text-green-800';
+        });
+
+        // Инициализация
+        generateRouletteItems();
+    </script>
+</body>
+</html>
